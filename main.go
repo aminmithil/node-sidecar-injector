@@ -42,9 +42,20 @@ var (
 )
 
 func init() {
+	log.Info(fmt.Sprint("Init first line before adding scheme"))
 	_ = clientgoscheme.AddToScheme(scheme)
 
 	// +kubebuilder:scaffold:scheme
+}
+
+// InjectClient is called by the application.Builder
+// to provide a client.Client
+// This method is called when ctrl is initialized
+// for reference - https://github.com/kubernetes-sigs/controller-runtime/blob/master/pkg/runtime/inject/inject.go#L75
+func (a *MyReconciler) InjectClient(c client.Client) error {
+	log.Info(fmt.Sprint("Client Inject Method is Called"))
+	a.Client = c
+	return nil
 }
 
 func main() {
@@ -69,9 +80,9 @@ func main() {
 
 	err = builder.
 		ControllerManagedBy(mgr).         // Create the ControllerManagedBy
-		For(&extenstionsv1.Deployment{}). // ReplicaSet is the Application API
-		Owns(&core.Pod{}).                // ReplicaSet owns Pods created by it
-		Complete(&DeploymentReconciler{})
+		For(&extenstionsv1.Deployment{}). // Deployment is the Application API
+		Owns(&core.Pod{}).                // Deployment owns Pods created by it
+		Complete(&MyReconciler{})
 	if err != nil {
 		log.Error(err, "could not create controller")
 		os.Exit(1)
@@ -85,17 +96,9 @@ func main() {
 	}
 }
 
-// DeploymentReconciler is a simple ControllerManagedBy example implementation.
-type DeploymentReconciler struct {
+// MyReconciler is a simple ControllerManagedBy example implementation.
+type MyReconciler struct {
 	client.Client
-}
-
-// InjectClient is called by the application.Builder
-// to provide a client.Client
-func (a *DeploymentReconciler) InjectClient(c client.Client) error {
-	log.Info(fmt.Sprint("Client Inject Method is Called"))
-	a.Client = c
-	return nil
 }
 
 // Reconcile method
@@ -106,31 +109,24 @@ func (a *DeploymentReconciler) InjectClient(c client.Client) error {
 // * Read the ReplicaSet
 // * Read the Pods
 // * Set a Label on the ReplicaSet with the Pod count
-func (a *DeploymentReconciler) Reconcile(req reconcile.Request) (reconcile.Result, error) {
+func (a *MyReconciler) Reconcile(req reconcile.Request) (reconcile.Result, error) {
 	// Read the ReplicaSet
-	rs := &extenstionsv1.Deployment{}
-	err := a.Get(context.TODO(), req.NamespacedName, rs)
-	if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// List the Pods matching the PodTemplate Labels
-	pods := &core.PodList{}
-	err = a.List(context.TODO(), pods, client.InNamespace(req.Namespace),
-		client.MatchingLabels(rs.Spec.Template.Labels))
+	dep := &extenstionsv1.Deployment{}
+	err := a.Get(context.TODO(), req.NamespacedName, dep)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 
 	// Add Sidecar
-	if val, found := rs.Labels["node-sidecar"]; val == "true" && found {
-		isSidecarRunning := isSidecarRunning(rs)
+	if val, found := dep.Labels["node-sidecar"]; val == "true" && found {
+		isSidecarRunning := isSidecarRunning(dep)
+		// don't inject if sidecar is already in the deployment
 		if !isSidecarRunning {
-			rs.Spec.Template.Spec.Containers = append(rs.Spec.Template.Spec.Containers, sideCarContainer())
+			dep.Spec.Template.Spec.Containers = append(dep.Spec.Template.Spec.Containers, sideCarContainer())
 		}
 	}
-	rs.Labels["pod-count"] = fmt.Sprintf("%v", len(pods.Items))
-	err = a.Update(context.TODO(), rs)
+
+	err = a.Update(context.TODO(), dep)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
